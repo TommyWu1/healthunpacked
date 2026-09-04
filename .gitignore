@@ -8,7 +8,9 @@ dist/
 venv/
 .pytest_cache/
 
-# health exports are personal data - never commit a real one
+# health exports are personal data - never commit a real one.
+# the two exceptions are synthetic, not real people's data.
 data/
 *.xml
 !tests/fixtures/*.xml
+!static/sample-export.xml
