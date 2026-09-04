@@ -16,9 +16,18 @@ import statistics
 import time
 
 import healthunpacked
+from healthunpacked import scanner
 
 
 def lxml_streaming(path):
+    """The properly-tuned version, not the naive one.
+
+    el.clear() alone doesn't remove the element from its parent - a
+    million "cleared" empty siblings still sitting under the root adds
+    up. Deleting the preceding sibling too is the documented pattern
+    for actually keeping iterparse's memory flat; skip it and this
+    would look artificially bad, more than triple the RSS in testing.
+    """
     from lxml import etree
 
     total = 0
@@ -28,6 +37,8 @@ def lxml_streaming(path):
         counts[t] = counts.get(t, 0) + 1
         total += 1
         el.clear()
+        while el.getprevious() is not None:
+            del el.getparent()[0]
     return total, counts
 
 
@@ -66,6 +77,7 @@ def main():
 
     candidates = [
         ("healthunpacked.scan", healthunpacked.scan),
+        ("pure python", scanner.scan),
         ("lxml, streaming", lxml_streaming),
     ]
     # the full-tree parse is what most people write first - worth showing
