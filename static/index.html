@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>healthunpacked</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    max-width: 900px; margin: 0 auto; padding: 2rem 1.25rem 4rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.9rem; margin-bottom: 0.25rem; }
+  .sub { color: #888; margin-top: 0; font-size: 0.85rem; }
+  #drop {
+    border: 2px dashed #888; border-radius: 8px; padding: 2.5rem 1rem;
+    text-align: center; margin: 1.5rem 0; cursor: pointer;
+  }
+  #drop.hover { border-color: #4a9; background: rgba(80, 200, 150, 0.08); }
+  #drop p { margin: 0.25rem 0; }
+  button {
+    font-family: inherit; font-size: 0.9rem; padding: 0.5rem 1rem;
+    border-radius: 6px; border: 1px solid #888; background: transparent;
+    cursor: pointer; color: inherit;
+  }
+  button:hover { border-color: #4a9; }
+  select {
+    font-family: inherit; font-size: 0.9rem; padding: 0.4rem;
+    margin-left: 0.5rem;
+  }
+  #status { color: #888; font-size: 0.85rem; min-height: 1.2em; }
+  #stats { display: flex; gap: 1.5rem; margin: 1rem 0; font-size: 0.85rem; }
+  #stats b { display: block; font-size: 1.3rem; }
+  #chart { margin-top: 1rem; }
+  .u-legend { font-size: 0.8rem; }
+  footer { margin-top: 3rem; color: #888; font-size: 0.8rem; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+
+<h1>healthunpacked</h1>
+<p class="sub">drop your Apple Health export.xml below - it's parsed, charted, and discarded, never stored</p>
+
+<div id="drop">
+  <p><strong>drop export.xml here</strong> or click to choose a file</p>
+  <p style="color:#888">or</p>
+  <button id="sample-btn" type="button">try it with sample data</button>
+  <input id="file-input" type="file" accept=".xml" style="display:none">
+</div>
+
+<div id="status"></div>
+
+<div id="controls" hidden>
+  record type:
+  <select id="type-select"></select>
+</div>
+
+<div id="stats" hidden>
+  <div><b id="stat-total">-</b>records</div>
+  <div><b id="stat-points">-</b>in this series</div>
+  <div><b id="stat-anomalies">-</b>flagged</div>
+</div>
+
+<div id="chart"></div>
+
+<footer>
+  <a href="https://github.com/TommyWu1/healthunpacked">source</a> ·
+  streaming C parser, no upload is kept after the request finishes
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+<script>
+const drop = document.getElementById("drop");
+const fileInput = document.getElementById("file-input");
+const sampleBtn = document.getElementById("sample-btn");
+const status = document.getElementById("status");
+const controls = document.getElementById("controls");
+const typeSelect = document.getElementById("type-select");
+const stats = document.getElementById("stats");
+
+let currentFile = null;
+let usingSample = false;
+let plot = null;
+
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("hover"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("hover"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("hover");
+  if (e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener("change", () => {
+  if (fileInput.files.length) loadFile(fileInput.files[0]);
+});
+sampleBtn.addEventListener("click", () => loadFile(null, true));
+
+function formBody(extra) {
+  const body = new FormData();
+  if (usingSample) {
+    body.set("use_sample", "true");
+  } else {
+    body.set("file", currentFile);
+  }
+  for (const [k, v] of Object.entries(extra || {})) body.set(k, v);
+  return body;
+}
+
+async function loadFile(file, sample) {
+  currentFile = file;
+  usingSample = !!sample;
+  status.textContent = "parsing...";
+  controls.hidden = true;
+  stats.hidden = true;
+
+  const start = performance.now();
+  const res = await fetch("/api/scan", { method: "POST", body: formBody() });
+  if (!res.ok) {
+    status.textContent = "couldn't read that file - is it an Apple Health export.xml?";
+    return;
+  }
+  const data = await res.json();
+  const elapsed = ((performance.now() - start) / 1000).toFixed(2);
+  status.textContent = `${data.total.toLocaleString()} records parsed in ${elapsed}s`;
+
+  const types = Object.entries(data.counts)
+    .filter(([t]) => t.includes("Quantity"))
+    .sort((a, b) => b[1] - a[1]);
+
+  typeSelect.innerHTML = types
+    .map(([t, n]) => `<option value="${t}">${t.replace("HKQuantityTypeIdentifier", "")} (${n.toLocaleString()})</option>`)
+    .join("");
+  controls.hidden = false;
+
+  // default to HeartRate when it's there - it's the type the anomaly
+  // threshold was actually tuned against. other types work, but a
+  // bursty metric like step count will over-flag with the same k;
+  // see the readme
+  const preferred = types.find(([t]) => t === "HKQuantityTypeIdentifierHeartRate") || types[0];
+  typeSelect.value = preferred[0];
+  if (preferred) loadSeries(preferred[0]);
+}
+
+typeSelect.addEventListener("change", () => loadSeries(typeSelect.value));
+
+async function loadSeries(recordType) {
+  status.textContent = "loading series...";
+  const res = await fetch("/api/series", { method: "POST", body: formBody({ record_type: recordType }) });
+  if (!res.ok) {
+    status.textContent = "no data for that type";
+    return;
+  }
+  const data = await res.json();
+  status.textContent = "";
+
+  document.getElementById("stat-total").textContent = data.total_points.toLocaleString();
+  document.getElementById("stat-points").textContent = data.chart.times.length.toLocaleString();
+  document.getElementById("stat-anomalies").textContent = data.anomaly_count.toLocaleString();
+  stats.hidden = false;
+
+  render(data, recordType);
+}
+
+function render(data, label) {
+  const opts = {
+    width: Math.min(860, window.innerWidth - 40),
+    height: 360,
+    title: label.replace("HKQuantityTypeIdentifier", ""),
+    series: [
+      {},
+      { label: "value", stroke: "#4a9", width: 1.5 },
+      { label: "anomaly", stroke: "#e55", width: 0, points: { show: true, size: 6, fill: "#e55" } },
+    ],
+    axes: [{}, {}],
+  };
+
+  // anomaly points are guaranteed by the backend to be present in this
+  // same array, so lining up the overlay is just a null-mask, no matching
+  const anomAligned = data.chart.values.map((v, i) => (data.chart.is_anomaly[i] ? v : null));
+  const chartData = [data.chart.times, data.chart.values, anomAligned];
+
+  document.getElementById("chart").innerHTML = "";
+  if (plot) plot.destroy();
+  plot = new uPlot(opts, chartData, document.getElementById("chart"));
+}
+</script>
+</body>
+</html>
