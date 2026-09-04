@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<HealthData locale="en_CA">
+ <ExportDate value="2026-09-03 10:00:00 -0400"/>
+ <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Apple Watch" unit="count/min" startDate="2026-01-01 08:00:00 -0500" endDate="2026-01-01 08:00:00 -0500" value="72"/>
+ <Record type="HKQuantityTypeIdentifierHeartRate" sourceName="Apple Watch" unit="count/min" startDate="2026-01-01 08:05:00 -0500" endDate="2026-01-01 08:05:00 -0500" value="75"/>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2026-01-01 09:00:00 -0500" endDate="2026-01-01 09:10:00 -0500" value="431"/>
+ <Record type="HKCategoryTypeIdentifierSleepAnalysis" sourceName="Apple Watch" startDate="2026-01-01 23:00:00 -0500" endDate="2026-01-02 06:30:00 -0500" value="HKCategoryValueSleepAnalysisAsleepDeep">
+  <MetadataEntry key="HKTimeZone" value="America/Toronto"/>
+ </Record>
+ <Record type="HKQuantityTypeIdentifierStepCount" sourceName="iPhone" unit="count" startDate="2026-01-02 09:00:00 -0500" endDate="2026-01-02 09:10:00 -0500" value="1024"/>
+</HealthData>
