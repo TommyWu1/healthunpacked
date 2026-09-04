@@ -1,3 +1,3 @@
-from healthunpacked.scanner import scan
+from healthunpacked._scan import scan
 
 __all__ = ["scan"]
