@@ -28,3 +28,10 @@ def test_agree_on_a_truncated_record(tmp_path):
     )
 
     assert healthunpacked.scan(str(path)) == scanner.scan(str(path)) == (0, {})
+
+
+def test_read_series_agrees_with_reference(big_export):
+    for record_type in ["HeartRate", "StepCount", "RestingHeartRate"]:
+        full_type = f"HKQuantityTypeIdentifier{record_type}"
+        assert healthunpacked.read_series(str(big_export), full_type) == \
+            scanner.read_series(str(big_export), full_type)
