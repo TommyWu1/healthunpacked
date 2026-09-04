@@ -256,8 +256,159 @@ static PyObject *scan(PyObject *module, PyObject *args)
 }
 
 
+
+/* ----------------------------------------------------------------- series */
+/*
+ * Same window-and-carry walk as scan(), but instead of tallying every
+ * record it pulls (startDate, value) out of the ones matching one
+ * requested type and appends them to two Python lists.
+ *
+ * scan() never touches a Python object inside its read loop, which is
+ * what lets it release the GIL for the whole thing. This can't do that:
+ * building the timestamp string and the float, and appending them,
+ * are all Python C-API calls that need the GIL held. The GIL is only
+ * free time here anyway, since the cost of a big export is scanning
+ * bytes, not the handful of appends for one series.
+ */
+
+PyDoc_STRVAR(read_series_doc,
+"read_series(path, record_type)\n"
+"\n"
+"Return (timestamps, values) for every record of one type.\n"
+"Only meaningful for numeric records - heart rate, step count, and so on.");
+
+static PyObject *read_series(PyObject *module, PyObject *args)
+{
+    const char *path;
+    const char *want_type;
+    Py_ssize_t want_type_len;
+    if (!PyArg_ParseTuple(args, "ss#:read_series",
+                          &path, &want_type, &want_type_len)) {
+        return NULL;
+    }
+
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) {
+        PyErr_SetFromErrnoWithFilename(PyExc_OSError, path);
+        return NULL;
+    }
+
+    PyObject *timestamps = PyList_New(0);
+    PyObject *values = PyList_New(0);
+    if (timestamps == NULL || values == NULL) {
+        Py_XDECREF(timestamps);
+        Py_XDECREF(values);
+        fclose(file);
+        return NULL;
+    }
+
+    static char buffer[WINDOW + MAX_RECORD];
+    size_t leftover = 0;
+    int record_too_long = 0;
+
+    for (;;) {
+        size_t bytes_read = fread(buffer + leftover, 1, WINDOW, file);
+        if (bytes_read == 0) {
+            break;
+        }
+
+        size_t filled = leftover + bytes_read;
+        size_t at = 0;
+
+        for (;;) {
+            const char *open = find(buffer + at, filled - at,
+                                    OPEN_TAG, OPEN_TAG_LEN);
+            if (open == NULL) {
+                size_t keep = OPEN_TAG_LEN - 1;
+                at = (filled > keep) ? filled - keep : 0;
+                break;
+            }
+
+            size_t record_at = (size_t)(open - buffer);
+            const char *close = find(buffer + record_at, filled - record_at,
+                                     "/>", 2);
+            if (close == NULL) {
+                at = record_at;
+                break;
+            }
+
+            size_t record_len = (size_t)(close - open) + 2;
+
+            const char *type_val;
+            size_t type_len;
+            int is_wanted = read_attribute(open, record_len, "type", 4,
+                                           &type_val, &type_len)
+                          && type_len == (size_t)want_type_len
+                          && memcmp(type_val, want_type, type_len) == 0;
+
+            if (is_wanted) {
+                const char *date_val, *value_val;
+                size_t date_len, value_len;
+                int have_date = read_attribute(open, record_len,
+                                               "startDate", 9,
+                                               &date_val, &date_len);
+                int have_value = read_attribute(open, record_len,
+                                                "value", 5,
+                                                &value_val, &value_len);
+
+                if (have_date && have_value && value_len < 64) {
+                    char number[64];
+                    memcpy(number, value_val, value_len);
+                    number[value_len] = '\0';
+
+                    char *end;
+                    double parsed = strtod(number, &end);
+
+                    if (end != number) {
+                        PyObject *ts = PyUnicode_FromStringAndSize(
+                            date_val, (Py_ssize_t)date_len);
+                        PyObject *val = PyFloat_FromDouble(parsed);
+
+                        if (ts == NULL || val == NULL ||
+                            PyList_Append(timestamps, ts) < 0 ||
+                            PyList_Append(values, val) < 0) {
+                            Py_XDECREF(ts);
+                            Py_XDECREF(val);
+                            Py_DECREF(timestamps);
+                            Py_DECREF(values);
+                            fclose(file);
+                            return NULL;
+                        }
+                        Py_DECREF(ts);
+                        Py_DECREF(val);
+                    }
+                }
+            }
+
+            at = record_at + record_len;
+        }
+
+        leftover = filled - at;
+        if (leftover > MAX_RECORD) {
+            record_too_long = 1;
+            break;
+        }
+        memmove(buffer, buffer + at, leftover);
+    }
+
+    fclose(file);
+
+    if (record_too_long) {
+        Py_DECREF(timestamps);
+        Py_DECREF(values);
+        PyErr_SetString(PyExc_ValueError,
+                        "found a record over 64 KiB; this does not look like "
+                        "a health export");
+        return NULL;
+    }
+
+    return Py_BuildValue("NN", timestamps, values);
+}
+
+
 static PyMethodDef methods[] = {
     {"scan", scan, METH_VARARGS, scan_doc},
+    {"read_series", read_series, METH_VARARGS, read_series_doc},
     {NULL, NULL, 0, NULL},
 };
 
