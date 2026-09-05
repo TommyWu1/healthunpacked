@@ -6,12 +6,12 @@ Leaving it in python.
 
 import time
 
-import healthunpacked
+from _shared import load_heart_rate
 from healthunpacked.downsample import lttb
 
 
 def main():
-    _, values = healthunpacked.read_series("data/big.xml", "HKQuantityTypeIdentifierHeartRate")
+    values = load_heart_rate()
     print(f"{len(values)} points")
 
     start = time.perf_counter()

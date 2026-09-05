@@ -8,7 +8,7 @@ dropouts. This is the balance point.
 
 import numpy as np
 
-import healthunpacked
+from _shared import load_heart_rate
 from healthunpacked.anomaly import flag_anomalies
 from healthunpacked.faults import inject_dropouts, inject_spikes
 
@@ -23,8 +23,7 @@ def score(injected, flags):
 
 
 def main():
-    _, values = healthunpacked.read_series("data/big.xml", "HKQuantityTypeIdentifierHeartRate")
-    values = values[:50000]
+    values = load_heart_rate(limit=50000)
 
     for name, inject in [("spike", inject_spikes), ("dropout", inject_dropouts)]:
         faulty, injected = inject(values, count=100, seed=0)
